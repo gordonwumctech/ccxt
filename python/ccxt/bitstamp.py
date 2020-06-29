@@ -40,10 +40,19 @@ class bitstamp(Exchange):
                 'fetchDepositAddress': True,
                 'fetchOrder': True,
                 'fetchOpenOrders': True,
+                'fetchOHLCV': True,
                 'fetchMyTrades': True,
                 'fetchTransactions': True,
                 'fetchWithdrawals': True,
                 'withdraw': True,
+            },
+            'timeframes': {
+                '1m': 60,
+                '5m': 300,
+                '15m': 900,
+                '1h': 3600,
+                '6h': 21600,
+                '1d': 86400,
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/27786377-8c8ab57e-5fe9-11e7-8ea4-2b05b6bcceec.jpg',
@@ -67,6 +76,7 @@ class bitstamp(Exchange):
                         'ticker_hour/{pair}/',
                         'ticker/{pair}/',
                         'transactions/{pair}/',
+                        'ohlc/{pair}/',
                         'trading-pairs-info/',
                     ],
                 },
@@ -193,6 +203,42 @@ class bitstamp(Exchange):
                 },
             },
         })
+
+    def parse_ohlcv(self, ohlcv, market=None, timeframe='1m', since=None, limit=None):
+
+        return [
+            self.safe_timestamp(ohlcv, 'timestamp'),
+            self.safe_float(ohlcv, 'open'),
+            self.safe_float(ohlcv, 'high'),
+            self.safe_float(ohlcv, 'low'),
+            self.safe_float(ohlcv, 'close'),
+            self.safe_float(ohlcv, 'volume'),
+        ]
+        # return [
+        #     ohlcv[0] * 1000,
+        #     ohlcv[3],
+        #     ohlcv[2],
+        #     ohlcv[1],
+        #     ohlcv[4],
+        #     ohlcv[5],
+        # ]
+
+    def fetch_ohlcv(self, symbol, timeframe='1m', since=None, limit=None, params={}):
+        self.load_markets()
+        market = self.market(symbol)
+        granularity = self.timeframes[timeframe]
+        request = {
+            'pair': market['id'],
+            'step': granularity,
+        }
+        if limit is None:
+            limit = 1000  # max = 1000
+        request['limit'] = limit
+        if since is not None:
+            request['start'] = int(since/1000)
+            # request['end'] = self.iso8601(self.sum((limit - 1) * granularity * 1000, since))
+        response = self.publicGetOhlcPair(self.extend(request, params))
+        return self.parse_ohlcvs(response['data']['ohlc'], market, timeframe, since, limit)
 
     def fetch_markets(self, params={}):
         response = self.publicGetTradingPairsInfo(params)
