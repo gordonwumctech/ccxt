@@ -77,6 +77,8 @@ class binance(Exchange):
                 'test': {
                     'fapiPublic': 'https://testnet.binancefuture.com/fapi/v1',
                     'fapiPrivate': 'https://testnet.binancefuture.com/fapi/v1',
+                    'dapiPublic': 'https://testnet.binancefuture.com/dapi/v1',
+                    'dapiPrivate': 'https://testnet.binancefuture.com/dapi/v1',
                     'public': 'https://testnet.binance.vision/api/v3',
                     'private': 'https://testnet.binance.vision/api/v3',
                     'v3': 'https://testnet.binance.vision/api/v3',
@@ -85,6 +87,8 @@ class binance(Exchange):
                 'api': {
                     'wapi': 'https://api.binance.com/wapi/v3',
                     'sapi': 'https://api.binance.com/sapi/v1',
+                    'dapiPublic': 'https://dapi.binance.com/dapi/v1',
+                    'dapiPrivate': 'https://dapi.binance.com/dapi/v1',
                     'fapiPublic': 'https://fapi.binance.com/fapi/v1',
                     'fapiPrivate': 'https://fapi.binance.com/fapi/v1',
                     'public': 'https://api.binance.com/api/v3',
@@ -207,6 +211,27 @@ class binance(Exchange):
                         'sub-account/assets',
                     ],
                 },
+                'dapiPublic': {
+                    'get': [
+                        'ping',
+                        'time',
+                        'exchangeInfo',
+                        'depth',
+                        'trades',
+                        'historicalTrades',
+                        'aggTrades',
+                        'premiumIndex',
+                        'klines',
+                        'continuousKlines',
+                        'indexPriceKlines',
+                        'markPriceKlines',
+                        'ticker/24hr',
+                        'ticker/price',
+                        'ticker/bookTicker',
+                        'allForceOrders',
+                        'openInterest',
+                    ],
+                },
                 'fapiPublic': {
                     'get': [
                         'ping',
@@ -326,7 +351,7 @@ class binance(Exchange):
                 'fetchTradesMethod': 'publicGetAggTrades',  # publicGetTrades, publicGetHistoricalTrades
                 'fetchTickersMethod': 'publicGetTicker24hr',
                 'defaultTimeInForce': 'GTC',  # 'GTC' = Good To Cancel(default), 'IOC' = Immediate Or Cancel
-                'defaultType': 'spot',  # 'spot', 'future', 'margin'
+                'defaultType': 'spot',  # 'spot', 'future', 'margin', 'delivery'
                 'hasAlreadyAuthenticatedSuccessfully': False,
                 'warnOnFetchOpenOrdersWithoutSymbol': True,
                 'recvWindow': 5 * 1000,  # 5 sec, binance default
@@ -383,9 +408,11 @@ class binance(Exchange):
         defaultType = self.safe_string_2(self.options, 'fetchMarkets', 'defaultType', 'spot')
         type = self.safe_string(params, 'type', defaultType)
         query = self.omit(params, 'type')
-        if (type != 'spot') and (type != 'future') and (type != 'margin'):
+        if (type != 'spot') and (type != 'future') and (type != 'margin') and (type != 'delivery'):
             raise ExchangeError(self.id + " does not support '" + type + "' type, set exchange.options['defaultType'] to 'spot', 'margin' or 'future'")  # eslint-disable-line quotes
-        method = 'fapiPublicGetExchangeInfo' if (type == 'future') else 'publicGetExchangeInfo'
+        method = 'fapiPublicGetExchangeInfo' if (type == 'future') else \
+                 'dapiPublicGetExchangeInfo' if (type == 'delivery') else \
+                 'publicGetExchangeInfo'
         response = getattr(self, method)(query)
         #
         # spot / margin
@@ -463,15 +490,60 @@ class binance(Exchange):
         #         ]
         #     }
         #
+        # delivery(dapi)
+        # {'symbol': 'BTCUSD_201225',
+        #  'pair': 'BTCUSD',
+        #  'contractType': '',
+        #  'deliveryDate': 1608883200000,
+        #  'onboardDate': 1593158400000,
+        #  'contractStatus': 'PENDING_TRADING',
+        #  'contractSize': 100,
+        #  'marginAsset': 'BTC',
+        #  'maintMarginPercent': '2.5000',
+        #  'requiredMarginPercent': '5.0000',
+        #  'baseAsset': 'BTC',
+        #  'quoteAsset': 'USD',
+        #  'pricePrecision': 1,
+        #  'quantityPrecision': 0,
+        #  'baseAssetPrecision': 8,
+        #  'quotePrecision': 8,
+        #  'equalQtyPrecision': 4,
+        #  'filters': [{'minPrice': '0.1',
+        #               'maxPrice': '100000',
+        #               'filterType': 'PRICE_FILTER',
+        #               'tickSize': '0.1'},
+        #              {'stepSize': '1',
+        #               'filterType': 'LOT_SIZE',
+        #               'maxQty': '100000',
+        #               'minQty': '1'},
+        #              {'stepSize': '1',
+        #               'filterType': 'MARKET_LOT_SIZE',
+        #               'maxQty': '100000',
+        #               'minQty': '1'},
+        #              {'limit': 200, 'filterType': 'MAX_NUM_ORDERS'},
+        #              {'multiplierDown': '0.8500',
+        #               'multiplierUp': '1.1500',
+        #               'multiplierDecimal': '4',
+        #               'filterType': 'PERCENT_PRICE'}],
+        #  'orderTypes': ['LIMIT',
+        #                 'MARKET',
+        #                 'STOP',
+        #                 'STOP_MARKET',
+        #                 'TAKE_PROFIT',
+        #                 'TAKE_PROFIT_MARKET',
+        #                 'TRAILING_STOP_MARKET'],
+        #  'timeInForce': ['GTC', 'IOC', 'FOK', 'GTX']}
+
         if self.options['adjustForTimeDifference']:
             self.load_time_difference()
         markets = self.safe_value(response, 'symbols')
         result = []
         for i in range(0, len(markets)):
             market = markets[i]
-            future = ('maintMarginPercent' in market)
-            spot = not future
-            marketType = 'spot' if spot else 'future'
+            delivery = ('contractType' in market)
+            future = ('maintMarginPercent' in market) and not delivery
+            spot = not (future or delivery)
+            marketType = 'spot' if spot else 'delivery' if delivery else 'future'
             id = self.safe_string(market, 'symbol')
             lowercaseId = self.safe_string_lower(market, 'symbol')
             baseId = self.safe_string(market, 'baseAsset')
@@ -503,6 +575,7 @@ class binance(Exchange):
                 'spot': spot,
                 'margin': margin,
                 'future': future,
+                'delivery': delivery,
                 'active': active,
                 'precision': precision,
                 'limits': {
@@ -799,16 +872,32 @@ class binance(Exchange):
 
     def fetch_ohlcv(self, symbol, timeframe='1m', since=None, limit=None, params={}):
         self.load_markets()
-        market = self.market(symbol)
-        request = {
-            'symbol': market['id'],
-            'interval': self.timeframes[timeframe],
-        }
+        defaultType = self.safe_string_2(self.options, 'fetchTrades', 'defaultType', 'spot')
+        type = self.safe_string(params, 'type', defaultType)
+        if type == 'delivery':
+            pair = symbol.split('_')[0].upper()
+            contractType = '_'.join(symbol.split('_')[1:]).upper()
+            request = {
+                'pair': pair,
+                'interval': self.timeframes[timeframe],
+                'contractType': contractType,
+            }
+            market = None
+        else:
+            market = self.market(symbol)
+            request = {
+                'symbol': market['id'],
+                'interval': self.timeframes[timeframe],
+            }
+
         if since is not None:
             request['startTime'] = since
         if limit is not None:
             request['limit'] = limit  # default == max == 500
-        method = 'publicGetKlines' if market['spot'] else 'fapiPublicGetKlines'
+        method = 'publicGetKlines' if type == 'spot' else \
+            'fapiPublicGetKlines' if type == 'future' else \
+            'dapiPublicGetContinuousKlines' if type == 'delivery' else None
+
         response = getattr(self, method)(self.extend(request, params))
         #
         #     [
