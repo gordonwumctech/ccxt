@@ -169,6 +169,56 @@ class huobidm(Exchange):
                         'liquidation_orders',           # 获取强平订单
                     ],
                 },
+                'linear_swap': {
+                    'get': [
+                        'contract_info',  # 获取合约信息
+                        'index',  # 获取合约指数信息
+                        'price_limit',  # 获取合约最高限价和最低限价
+                        'open_interest',  # 获取当前可用合约总持仓量
+                        'market/depth',  # 获取行情深度数据
+                        'market/history/kline',  # 获取K线数据
+                        'market/detail/merged',  # 获取聚合行情
+                        'market/trade',  # 获取市场最近成交记录
+                        'market/history/trade',  # 批量获取最近的交易记录
+                        'risk_info',  # 查询合约风险准备金余额和预估分摊比例
+                        'insurance_fund',  # 查询合约风险准备金余额历史数据
+                        'adjustfactor',  # 查询平台阶梯调整系数
+                        'his_open_interest',  # 平台持仓量的查询
+                        'elite_account_ratio',  # 精英账户多空持仓对比-账户数
+                        'elite_position_ratio',  # 精英账户多空持仓对比-持仓量
+                        'api_state',  # 查询系统状态
+                        'funding_rate',  # 获取合约的资金费率
+                        'historical_funding_rate',  # 获取合约的历史资金费率
+                        'api_trading_status',  # 获取用户的API指标禁用信息(private)
+                    ],
+
+                    'post': [
+                        'account_info',  # 获取用户账户信息
+                        'position_info',  # 获取用户持仓信息
+                        'sub_account_list',  # 查询母账户下所有子账户资产信息
+                        'sub_account_info',  # 查询单个子账户资产信息
+                        'sub_position_info',  # 查询单个子账户持仓信息
+                        'financial_record',  # 查询用户财务记录
+                        'order_limit',  # 查询用户当前的下单量限制
+                        'fee',  # 查询用户当前的手续费费率
+                        'transfer_limit',  # 查询用户当前的划转限制
+                        'position_limit',  # 用户持仓量限制的查询
+                        'master_sub_transfer',  # 母子账户划转
+                        'master_sub_transfer_record',  # 获取母账户下的所有母子账户划转记录
+
+                        'order',  # 合约下单
+                        'batchorder',  # 合约批量下单
+                        'cancel',  # 撤销订单
+                        'cancelall',  # 全部撤单
+                        'order_info',  # 获取合约订单信息
+                        'order_detail',  # 获取订单明细信息
+                        'openorders',  # 获取合约当前未成交委托
+                        'hisorders',  # 获取合约历史委托
+                        'matchresults',  # 获取历史成交记录
+                        'lightning_close_position',  # 闪电平仓下单
+                        'liquidation_orders',  # 获取强平订单
+                    ],
+                },
 
                 'index': {
                     'get': [
@@ -263,14 +313,16 @@ class huobidm(Exchange):
         #     create_date: "20190823",
         #     contract_status: 1
         # }
+        defaultType = self.safe_string_2(self.options, 'fetchMarkets', 'defaultType', 'futures')
         base = baseId = market['symbol']
-        quote = quoteId = 'USD'
         if 'contract_type' in market:
+            quote = quoteId = 'USD'
             market_type = 'futures'
             expiration = self.expirations[market['contract_type']]
             symbol = f'{baseId}_{expiration}'
         else:
-            market_type = 'swap'
+            quote = quoteId = market['contract_code'].split('-')[1]
+            market_type = defaultType
             symbol = f'{base}-{quote}'
         active = (self.safe_integer(market, 'contract_status') == 1)
         price_tick = Decimal(market['price_tick'])
@@ -876,7 +928,7 @@ class huobidm(Exchange):
         defaultType = self.safe_string_2(self.options, 'fetchBalance', 'defaultType')
         type = self.safe_string(params, 'type', defaultType)
         if type is None:
-            raise ArgumentsRequired(self.id + " fetchBalance requires a type parameter(one of 'futures', 'swap')")
+            raise ArgumentsRequired(self.id + " fetchBalance requires a type parameter(one of 'futures', 'swap', 'linear_swap')")
         method = f'{type}PostAccountInfo'
         response = getattr(self, method)(params or {})
         # {
@@ -958,6 +1010,11 @@ class huobidm(Exchange):
                 prefix = 'swap-ex/'
             else:
                 prefix = f'swap-api/{self.version}/swap_'
+        elif api == 'linear_swap':
+            if path.startswith('market/'):
+                prefix = 'linear-swap-ex/'
+            else:
+                prefix = f'linear-swap-api/{self.version}/swap_'
         elif api == 'index':
             prefix = f'index/market/'
         else:
