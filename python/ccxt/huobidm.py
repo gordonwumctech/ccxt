@@ -174,6 +174,8 @@ class huobidm(Exchange):
                     'get': [
                         'history/index',    # 获取指数K线数据
                         'history/basis',    # 获取基差数据
+                        'history/linear_swap_mark_price_kline',  # 获取正向永续合约标记价格
+                        'history/swap_mark_price_kline'          # 获取反向永续合约标记价格
                     ]
                 },
 
@@ -957,7 +959,7 @@ class huobidm(Exchange):
             else:
                 prefix = f'swap-api/{self.version}/swap_'
         elif api == 'index':
-            prefix = f'api/{self.version}/index/market/'
+            prefix = f'index/market/'
         else:
             assert api == 'general' and path == 'heartbeat'
             url = self.urls['heartbeat'] + '/heartbeat'
