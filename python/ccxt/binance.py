@@ -14,7 +14,6 @@ from ccxt.base.errors import ArgumentsRequired
 from ccxt.base.errors import BadRequest
 from ccxt.base.errors import BadSymbol
 from ccxt.base.errors import InsufficientFunds
-from ccxt.base.errors import InvalidAddress
 from ccxt.base.errors import InvalidOrder
 from ccxt.base.errors import OrderNotFound
 from ccxt.base.errors import OrderImmediatelyFillable
@@ -133,6 +132,7 @@ class binance(Exchange):
                         'margin/priceIndex',
                         # these endpoints require self.apiKey + self.secret
                         'asset/assetDividend',
+                        'asset/transfer',
                         'margin/loan',
                         'margin/repay',
                         'margin/account',
@@ -174,6 +174,7 @@ class binance(Exchange):
                         'sub-account/spotSummary',
                         'sub-account/status',
                         'sub-account/transfer/subUserHistory',
+                        'sub-account/universalTransfer',
                         # lending endpoints
                         'lending/daily/product/list',
                         'lending/daily/userLeftQuota',
@@ -199,9 +200,23 @@ class binance(Exchange):
                         'bswap/liquidityOps',
                         'bswap/quote',
                         'bswap/swap',
+                        # leveraged token endpoints
+                        'blvt/tokenInfo',
+                        'blvt/subscribe/record',
+                        'blvt/redeem/record',
+                        'blvt/userLimit',
+                        # broker api
+                        'apiReferral/ifNewUser',
+                        'apiReferral/customization',
+                        'apiReferral/userCustomization',
+                        'apiReferral/rebate/recentRecord',
+                        'apiReferral/rebate/historicalRecord',
+                        'apiReferral/kickback/recentRecord',
+                        'apiReferral/kickback/historicalRecord',
                     ],
                     'post': [
                         'asset/dust',
+                        'asset/transfer',
                         'account/disableFastWithdrawSwitch',
                         'account/enableFastWithdrawSwitch',
                         'capital/withdraw/apply',
@@ -219,6 +234,7 @@ class binance(Exchange):
                         'sub-account/futures/internalTransfer',
                         'sub-account/transfer/subToSub',
                         'sub-account/transfer/subToMaster',
+                        'sub-account/universalTransfer',
                         'userDataStream',
                         'userDataStream/isolated',
                         'futures/transfer',
@@ -233,12 +249,21 @@ class binance(Exchange):
                         'bswap/liquidityAdd',
                         'bswap/liquidityRemove',
                         'bswap/swap',
+                        # leveraged token endpoints
+                        'blvt/subscribe',
+                        'blvt/redeem',
+                        # broker api
+                        'apiReferral/customization',
+                        'apiReferral/userCustomization',
+                        'apiReferral/rebate/historicalRecord',
+                        'apiReferral/kickback/historicalRecord',
                     ],
                     'put': [
                         'userDataStream',
                         'userDataStream/isolated',
                     ],
                     'delete': [
+                        'margin/openOrders',
                         'margin/order',
                         'userDataStream',
                         'userDataStream/isolated',
@@ -378,6 +403,15 @@ class binance(Exchange):
                         'positionSide/dual',
                         'userTrades',
                         'income',
+                        # broker endpoints
+                        'apiReferral/ifNewUser',
+                        'apiReferral/customization',
+                        'apiReferral/userCustomization',
+                        'apiReferral/traderNum',
+                        'apiReferral/overview',
+                        'apiReferral/tradeVol',
+                        'apiReferral/rebateVol',
+                        'apiReferral/traderSummary',
                     ],
                     'post': [
                         'batchOrders',
@@ -388,6 +422,9 @@ class binance(Exchange):
                         'leverage',
                         'listenKey',
                         'countdownCancelAll',
+                        # broker endpoints
+                        'apiReferral/customization',
+                        'apiReferral/userCustomization',
                     ],
                     'put': [
                         'listenKey',
@@ -481,9 +518,17 @@ class binance(Exchange):
                     'limit': 'RESULT',  # we change it from 'ACK' by default to 'RESULT'
                 },
                 'quoteOrderQty': True,  # whether market orders support amounts in quote currency
+                'broker': {
+                    'spot': 'x-R4BD3S82',
+                    'margin': 'x-R4BD3S82',
+                    'future': 'x-xcKtGhcu',
+                    'delivery': 'x-xcKtGhcu',
+                },
             },
             # https://binance-docs.github.io/apidocs/spot/en/#error-codes-2
             'exceptions': {
+                'System abnormality': ExchangeError,  # {"code":-1000,"msg":"System abnormality"}
+                'You are not authorized to execute self request.': PermissionDenied,  # {"msg":"You are not authorized to execute self request."}
                 'API key does not exist': AuthenticationError,
                 'Order would trigger immediately.': OrderImmediatelyFillable,
                 'Stop price would trigger immediately.': OrderImmediatelyFillable,  # {"code":-2010,"msg":"Stop price would trigger immediately."}
@@ -530,10 +575,12 @@ class binance(Exchange):
                 '-2013': OrderNotFound,  # fetchOrder(1, 'BTC/USDT') -> 'Order does not exist'
                 '-2014': AuthenticationError,  # {"code":-2014, "msg": "API-key format invalid."}
                 '-2015': AuthenticationError,  # "Invalid API-key, IP, or permissions for action."
+                '-2019': InsufficientFunds,  # {"code":-2019,"msg":"Margin is insufficient."}
                 '-3005': InsufficientFunds,  # {"code":-3005,"msg":"Transferring out not allowed. Transfer out amount exceeds max amount."}
                 '-3008': InsufficientFunds,  # {"code":-3008,"msg":"Borrow not allowed. Your borrow amount has exceed maximum borrow amount."}
                 '-3010': ExchangeError,  # {"code":-3010,"msg":"Repay not allowed. Repay amount exceeds borrow amount."}
                 '-3022': AccountSuspended,  # You account's trading is banned.
+                '-4028': BadRequest,  # {"code":-4028,"msg":"Leverage 100 is not valid"}
             },
         })
 
@@ -729,9 +776,8 @@ class binance(Exchange):
             quoteId = self.safe_string(market, 'quoteAsset')
             base = self.safe_currency_code(baseId)
             quote = self.safe_currency_code(quoteId)
-            parts = id.split('_')
-            lastPart = self.safe_string(parts, 1)
-            idSymbol = (delivery) and (lastPart != 'PERP')
+            contractType = self.safe_string(market, 'contractType')
+            idSymbol = (future or delivery) and (contractType != 'PERPETUAL')
             symbol = id if idSymbol else (base + '/' + quote)
             filters = self.safe_value(market, 'filters', [])
             filtersByType = self.index_by(filters, 'filterType')
@@ -805,7 +851,7 @@ class binance(Exchange):
                 }
             if 'MIN_NOTIONAL' in filtersByType:
                 filter = self.safe_value(filtersByType, 'MIN_NOTIONAL', {})
-                entry['limits']['cost']['min'] = self.safe_float(filter, 'minNotional')
+                entry['limits']['cost']['min'] = self.safe_float_2(filter, 'minNotional', 'notional')
             result.append(entry)
         return result
 
@@ -1180,14 +1226,23 @@ class binance(Exchange):
     def fetch_ohlcv(self, symbol, timeframe='1m', since=None, limit=None, params={}):
         self.load_markets()
         market = self.market(symbol)
+        # binance docs say that the default limit 500, max 1500 for futures, max 1000 for spot markets
+        # the reality is that the time range wider than 500 candles won't work right
+        defaultLimit = 500
+        maxLimit = 1500
+        limit = defaultLimit if (limit is None) else min(limit, maxLimit)
         request = {
             'symbol': market['id'],
             'interval': self.timeframes[timeframe],
+            'limit': limit,
         }
+        duration = self.parse_timeframe(timeframe)
         if since is not None:
             request['startTime'] = since
-        if limit is not None:
-            request['limit'] = limit  # default == max == 500
+            if since > 0:
+                endTime = self.sum(since, limit * duration * 1000 - 1)
+                now = self.milliseconds()
+                request['endTime'] = min(now, endTime)
         method = 'publicGetKlines'
         if market['future']:
             method = 'fapiPublicGetKlines'
@@ -1271,6 +1326,23 @@ class binance(Exchange):
         #       "symbol": "BTCUSDT",
         #       "time": 1569514978020
         #     }
+        #     {
+        #       "symbol": "BTCUSDT",
+        #       "id": 477128891,
+        #       "orderId": 13809777875,
+        #       "side": "SELL",
+        #       "price": "38479.55",
+        #       "qty": "0.001",
+        #       "realizedPnl": "-0.00009534",
+        #       "marginAsset": "USDT",
+        #       "quoteQty": "38.47955",
+        #       "commission": "-0.00076959",
+        #       "commissionAsset": "USDT",
+        #       "time": 1612733566708,
+        #       "positionSide": "BOTH",
+        #       "maker": True,
+        #       "buyer": False
+        #     }
         #
         timestamp = self.safe_integer_2(trade, 'T', 'time')
         price = self.safe_float_2(trade, 'p', 'price')
@@ -1296,6 +1368,8 @@ class binance(Exchange):
         takerOrMaker = None
         if 'isMaker' in trade:
             takerOrMaker = 'maker' if trade['isMaker'] else 'taker'
+        if 'maker' in trade:
+            takerOrMaker = 'maker' if trade['maker'] else 'taker'
         marketId = self.safe_string(trade, 'symbol')
         symbol = self.safe_symbol(marketId, market)
         cost = None
@@ -1404,7 +1478,7 @@ class binance(Exchange):
             'CANCELED': 'canceled',
             'PENDING_CANCEL': 'canceling',  # currently unused
             'REJECTED': 'rejected',
-            'EXPIRED': 'canceled',
+            'EXPIRED': 'expired',
         }
         return self.safe_string(statuses, status, status)
 
@@ -1512,6 +1586,7 @@ class binance(Exchange):
         clientOrderId = self.safe_string(order, 'clientOrderId')
         timeInForce = self.safe_string(order, 'timeInForce')
         postOnly = (type == 'limit_maker') or (timeInForce == 'GTX')
+        stopPrice = self.safe_float(order, 'stopPrice')
         return {
             'info': order,
             'id': id,
@@ -1525,6 +1600,7 @@ class binance(Exchange):
             'postOnly': postOnly,
             'side': side,
             'price': price,
+            'stopPrice': stopPrice,
             'amount': amount,
             'cost': cost,
             'average': average,
@@ -1564,7 +1640,13 @@ class binance(Exchange):
             'type': uppercaseType,
             'side': side.upper(),
         }
-        if clientOrderId is not None:
+        if clientOrderId is None:
+            broker = self.safe_value(self.options, 'broker')
+            if broker:
+                brokerId = self.safe_string(broker, orderType)
+                if brokerId is not None:
+                    request['newClientOrderId'] = brokerId + self.uuid22()
+        else:
             request['newClientOrderId'] = clientOrderId
         if market['spot']:
             request['newOrderRespType'] = self.safe_value(self.options['newOrderRespType'], type, 'RESULT')  # 'ACK' for order id, 'RESULT' for full order or 'FULL' for order with fills
@@ -1637,19 +1719,19 @@ class binance(Exchange):
             quantityIsRequired = True
             callbackRate = self.safe_float(params, 'callbackRate')
             if callbackRate is None:
-                raise InvalidOrder(self.id + ' createOrder method requires a callbackRate extra param for a ' + type + ' order')
+                raise InvalidOrder(self.id + ' createOrder() requires a callbackRate extra param for a ' + type + ' order')
         if quantityIsRequired:
             request['quantity'] = self.amount_to_precision(symbol, amount)
         if priceIsRequired:
             if price is None:
-                raise InvalidOrder(self.id + ' createOrder method requires a price argument for a ' + type + ' order')
+                raise InvalidOrder(self.id + ' createOrder() requires a price argument for a ' + type + ' order')
             request['price'] = self.price_to_precision(symbol, price)
         if timeInForceIsRequired:
             request['timeInForce'] = self.options['defaultTimeInForce']  # 'GTC' = Good To Cancel(default), 'IOC' = Immediate Or Cancel
         if stopPriceIsRequired:
             stopPrice = self.safe_float(params, 'stopPrice')
             if stopPrice is None:
-                raise InvalidOrder(self.id + ' createOrder method requires a stopPrice extra param for a ' + type + ' order')
+                raise InvalidOrder(self.id + ' createOrder() requires a stopPrice extra param for a ' + type + ' order')
             else:
                 params = self.omit(params, 'stopPrice')
                 request['stopPrice'] = self.price_to_precision(symbol, stopPrice)
@@ -1658,7 +1740,7 @@ class binance(Exchange):
 
     def fetch_order(self, id, symbol=None, params={}):
         if symbol is None:
-            raise ArgumentsRequired(self.id + ' fetchOrder requires a symbol argument')
+            raise ArgumentsRequired(self.id + ' fetchOrder() requires a symbol argument')
         self.load_markets()
         market = self.market(symbol)
         defaultType = self.safe_string_2(self.options, 'fetchOrder', 'defaultType', market['type'])
@@ -1677,14 +1759,14 @@ class binance(Exchange):
         if clientOrderId is not None:
             request['origClientOrderId'] = clientOrderId
         else:
-            request['orderId'] = int(id)
+            request['orderId'] = id
         query = self.omit(params, ['type', 'clientOrderId', 'origClientOrderId'])
         response = getattr(self, method)(self.extend(request, query))
         return self.parse_order(response, market)
 
     def fetch_orders(self, symbol=None, since=None, limit=None, params={}):
         if symbol is None:
-            raise ArgumentsRequired(self.id + ' fetchOrders requires a symbol argument')
+            raise ArgumentsRequired(self.id + ' fetchOrders() requires a symbol argument')
         self.load_markets()
         market = self.market(symbol)
         defaultType = self.safe_string_2(self.options, 'fetchOrders', 'defaultType', market['type'])
@@ -1788,7 +1870,7 @@ class binance(Exchange):
 
     def cancel_order(self, id, symbol=None, params={}):
         if symbol is None:
-            raise ArgumentsRequired(self.id + ' cancelOrder requires a symbol argument')
+            raise ArgumentsRequired(self.id + ' cancelOrder() requires a symbol argument')
         self.load_markets()
         market = self.market(symbol)
         defaultType = self.safe_string_2(self.options, 'fetchOpenOrders', 'defaultType', market['type'])
@@ -1797,11 +1879,11 @@ class binance(Exchange):
         origClientOrderId = self.safe_value_2(params, 'origClientOrderId', 'clientOrderId')
         request = {
             'symbol': market['id'],
-            # 'orderId': int(id),
+            # 'orderId': id,
             # 'origClientOrderId': id,
         }
         if origClientOrderId is None:
-            request['orderId'] = int(id)
+            request['orderId'] = id
         else:
             request['origClientOrderId'] = origClientOrderId
         method = 'privateDeleteOrder'
@@ -1817,7 +1899,7 @@ class binance(Exchange):
 
     def cancel_all_orders(self, symbol=None, params={}):
         if symbol is None:
-            raise ArgumentsRequired(self.id + ' cancelAllOrders requires a symbol argument')
+            raise ArgumentsRequired(self.id + ' cancelAllOrders() requires a symbol argument')
         self.load_markets()
         market = self.market(symbol)
         request = {
@@ -1827,7 +1909,9 @@ class binance(Exchange):
         type = self.safe_string(params, 'type', defaultType)
         query = self.omit(params, 'type')
         method = 'privateDeleteOpenOrders'
-        if type == 'future':
+        if type == 'margin':
+            method = 'sapiDeleteMarginOpenOrders'
+        elif type == 'future':
             method = 'fapiPrivateDeleteAllOpenOrders'
         elif type == 'delivery':
             method = 'dapiPrivateDeleteAllOpenOrders'
@@ -1889,18 +1973,21 @@ class binance(Exchange):
 
     def fetch_my_trades(self, symbol=None, since=None, limit=None, params={}):
         if symbol is None:
-            raise ArgumentsRequired(self.id + ' fetchMyTrades requires a symbol argument')
+            raise ArgumentsRequired(self.id + ' fetchMyTrades() requires a symbol argument')
         self.load_markets()
         market = self.market(symbol)
-        type = self.safe_value(params, 'type', market['type'])
+        defaultType = self.safe_string_2(self.options, 'fetchMyTrades', 'defaultType', market['type'])
+        type = self.safe_string(params, 'type', defaultType)
+        params = self.omit(params, 'type')
         method = None
         if type == 'spot':
             method = 'privateGetMyTrades'
+        elif type == 'margin':
+            method = 'sapiGetMarginMyTrades'
         elif type == 'future':
             method = 'fapiPrivateGetUserTrades'
         elif type == 'delivery':
             method = 'dapiPrivateGetUserTrades'
-        params = self.omit(params, 'type')
         request = {
             'symbol': market['id'],
         }
@@ -2165,6 +2252,8 @@ class binance(Exchange):
             if len(tag) < 1:
                 tag = None
         txid = self.safe_string(transaction, 'txId')
+        if (txid is not None) and (txid.find('Internal transfer ') >= 0):
+            txid = txid[18:]
         currencyId = self.safe_string(transaction, 'asset')
         code = self.safe_currency_code(currencyId, currency)
         timestamp = None
@@ -2209,14 +2298,27 @@ class binance(Exchange):
         self.load_markets()
         currency = self.currency(code)
         request = {
-            'asset': currency['id'],
+            'coin': currency['id'],
+            # 'network': 'ETH',  # 'BSC', 'XMR', you can get network and isDefault in networkList in the response of sapiGetCapitalConfigDetail
         }
-        response = self.wapiGetDepositAddress(self.extend(request, params))
-        success = self.safe_value(response, 'success')
-        if (success is None) or not success:
-            raise InvalidAddress(self.id + ' fetchDepositAddress returned an empty response – create the deposit address in the user settings first.')
+        # has support for the 'network' parameter
+        # https://binance-docs.github.io/apidocs/spot/en/#deposit-address-supporting-network-user_data
+        response = self.sapiGetCapitalDepositAddress(self.extend(request, params))
+        #
+        #     {
+        #         currency: 'XRP',
+        #         address: 'rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh',
+        #         tag: '108618262',
+        #         info: {
+        #             coin: 'XRP',
+        #             address: 'rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh',
+        #             tag: '108618262',
+        #             url: 'https://bithomp.com/explorer/rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh'
+        #         }
+        #     }
+        #
         address = self.safe_string(response, 'address')
-        tag = self.safe_string(response, 'addressTag')
+        tag = self.safe_string(response, 'tag')
         self.check_address(address)
         return {
             'currency': code,
@@ -2380,7 +2482,7 @@ class binance(Exchange):
                     'timestamp': self.nonce(),
                     'recvWindow': recvWindow,
                 }, params))
-            elif path == 'batchOrders':
+            elif (path == 'batchOrders') or (path.find('sub-account') >= 0):
                 query = self.rawencode(self.extend({
                     'timestamp': self.nonce(),
                     'recvWindow': recvWindow,

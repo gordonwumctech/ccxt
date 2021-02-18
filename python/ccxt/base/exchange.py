@@ -4,7 +4,7 @@
 
 # -----------------------------------------------------------------------------
 
-__version__ = '1.41.82'
+__version__ = '1.41.99'
 
 # -----------------------------------------------------------------------------
 
@@ -518,9 +518,6 @@ class Exchange(object):
                 return key
         return None
 
-    def handle_errors(self, code, reason, url, method, headers, body, response, request_headers, request_body):
-        pass
-
     def prepare_request_headers(self, headers=None):
         headers = headers or {}
         headers.update(self.headers)
@@ -539,6 +536,12 @@ class Exchange(object):
 
     def set_headers(self, headers):
         return headers
+
+    def handle_errors(self, code, reason, url, method, headers, body, response, request_headers, request_body):
+        pass
+
+    def on_rest_response(self, code, reason, url, method, response_headers, response_body, request_headers, request_body):
+        return response_body.strip()
 
     def fetch(self, url, method='GET', headers=None, body=None):
         """Perform a HTTP request and return decoded JSON data"""
@@ -571,11 +574,11 @@ class Exchange(object):
             )
             # does not try to detect encoding
             response.encoding = 'utf-8'
-            http_response = response.text.strip()
+            headers = response.headers
             http_status_code = response.status_code
             http_status_text = response.reason
+            http_response = self.on_rest_response(http_status_code, http_status_text, url, method, headers, response.text, request_headers, request_body)
             json_response = self.parse_json(http_response)
-            headers = response.headers
             # FIXME remove last_x_responses from subclasses
             if self.enableLastHttpResponse:
                 self.last_http_response = http_response
@@ -1772,11 +1775,11 @@ class Exchange(object):
             array = array[-limit:] if tail and (since is None) else array[:limit]
         return array
 
-    def filter_by_symbol_since_limit(self, array, symbol=None, since=None, limit=None):
-        return self.filter_by_value_since_limit(array, 'symbol', symbol, since, limit)
+    def filter_by_symbol_since_limit(self, array, symbol=None, since=None, limit=None, tail=False):
+        return self.filter_by_value_since_limit(array, 'symbol', symbol, since, limit, 'timestamp', tail)
 
-    def filter_by_currency_since_limit(self, array, code=None, since=None, limit=None):
-        return self.filter_by_value_since_limit(array, 'currency', code, since, limit)
+    def filter_by_currency_since_limit(self, array, code=None, since=None, limit=None, tail=False):
+        return self.filter_by_value_since_limit(array, 'currency', code, since, limit, 'timestamp', tail)
 
     def filter_by_since_limit(self, array, since=None, limit=None, key='timestamp', tail=False):
         array = self.to_array(array)
@@ -2086,4 +2089,3 @@ class Exchange(object):
             string.append(Exchange.base58_encoder[next_character])
         string.reverse()
         return ''.join(string)
-

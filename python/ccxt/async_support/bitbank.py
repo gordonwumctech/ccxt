@@ -22,10 +22,17 @@ class bitbank(Exchange):
             'countries': ['JP'],
             'version': 'v1',
             'has': {
+                'cancelOrder': True,
+                'createOrder': True,
+                'fetchBalance': True,
+                'fetchDepositAddress': True,
+                'fetchMyTrades': True,
                 'fetchOHLCV': True,
                 'fetchOpenOrders': True,
-                'fetchMyTrades': True,
-                'fetchDepositAddress': True,
+                'fetchOrder': True,
+                'fetchOrderBook': True,
+                'fetchTicker': True,
+                'fetchTrades': True,
                 'withdraw': True,
             },
             'timeframes': {
@@ -82,12 +89,17 @@ class bitbank(Exchange):
                 'BCH/JPY': {'id': 'bcc_jpy', 'symbol': 'BCH/JPY', 'base': 'BCH', 'quote': 'JPY', 'baseId': 'bcc', 'quoteId': 'jpy'},
                 'MONA/BTC': {'id': 'mona_btc', 'symbol': 'MONA/BTC', 'base': 'MONA', 'quote': 'BTC', 'baseId': 'mona', 'quoteId': 'btc'},
                 'MONA/JPY': {'id': 'mona_jpy', 'symbol': 'MONA/JPY', 'base': 'MONA', 'quote': 'JPY', 'baseId': 'mona', 'quoteId': 'jpy'},
+                'QTUM/BTC': {'id': 'qtum_btc', 'symbol': 'QTUM/BTC', 'base': 'QTUM', 'quote': 'BTC', 'baseId': 'qtum', 'quoteId': 'btc'},
+                'QTUM/JPY': {'id': 'qtum_jpy', 'symbol': 'QTUM/JPY', 'base': 'QTUM', 'quote': 'JPY', 'baseId': 'qtum', 'quoteId': 'jpy'},
                 'ETH/BTC': {'id': 'eth_btc', 'symbol': 'ETH/BTC', 'base': 'ETH', 'quote': 'BTC', 'baseId': 'eth', 'quoteId': 'btc'},
                 'LTC/BTC': {'id': 'ltc_btc', 'symbol': 'LTC/BTC', 'base': 'LTC', 'quote': 'BTC', 'baseId': 'ltc', 'quoteId': 'btc'},
                 'XRP/JPY': {'id': 'xrp_jpy', 'symbol': 'XRP/JPY', 'base': 'XRP', 'quote': 'JPY', 'baseId': 'xrp', 'quoteId': 'jpy'},
+                'XLM/JPY': {'id': 'xlm_jpy', 'symbol': 'XLM/JPY', 'base': 'XLM', 'quote': 'JPY', 'baseId': 'xlm', 'quoteId': 'jpy'},
                 'BTC/JPY': {'id': 'btc_jpy', 'symbol': 'BTC/JPY', 'base': 'BTC', 'quote': 'JPY', 'baseId': 'btc', 'quoteId': 'jpy'},
                 'ETH/JPY': {'id': 'eth_jpy', 'symbol': 'ETH/JPY', 'base': 'ETH', 'quote': 'JPY', 'baseId': 'eth', 'quoteId': 'jpy'},
                 'LTC/JPY': {'id': 'ltc_jpy', 'symbol': 'LTC/JPY', 'base': 'LTC', 'quote': 'JPY', 'baseId': 'ltc', 'quoteId': 'jpy'},
+                'XRP/BTC': {'id': 'xrp_btc', 'symbol': 'XRP/BTC', 'base': 'XRP', 'quote': 'BTC', 'baseId': 'xrp', 'quoteId': 'btc'},
+                'XLM/BTC': {'id': 'xlm_btc', 'symbol': 'XLM/BTC', 'base': 'XLM', 'quote': 'BTC', 'baseId': 'xlm', 'quoteId': 'btc'},
             },
             'fees': {
                 'trading': {
@@ -165,7 +177,8 @@ class bitbank(Exchange):
             'pair': market['id'],
         }
         response = await self.publicGetPairTicker(self.extend(request, params))
-        return self.parse_ticker(response['data'], market)
+        data = self.safe_value(response, 'data', {})
+        return self.parse_ticker(data, market)
 
     async def fetch_order_book(self, symbol, limit=None, params={}):
         await self.load_markets()
@@ -196,8 +209,8 @@ class bitbank(Exchange):
         feeCost = self.safe_float(trade, 'fee_amount_quote')
         if feeCost is not None:
             fee = {
-                'currency': market['quote'],
-                'cost': feeCurrency,
+                'currency': feeCurrency,
+                'cost': feeCost,
             }
         orderId = self.safe_string(trade, 'order_id')
         type = self.safe_string(trade, 'type')
@@ -225,7 +238,9 @@ class bitbank(Exchange):
             'pair': market['id'],
         }
         response = await self.publicGetPairTransactions(self.extend(request, params))
-        return self.parse_trades(response['data']['transactions'], market, since, limit)
+        data = self.safe_value(response, 'data', {})
+        trades = self.safe_value(data, 'transactions', [])
+        return self.parse_trades(trades, market, since, limit)
 
     def parse_ohlcv(self, ohlcv, market=None):
         #
@@ -287,9 +302,10 @@ class bitbank(Exchange):
         await self.load_markets()
         response = await self.privateGetUserAssets(params)
         result = {'info': response}
-        balances = response['data']['assets']
-        for i in range(0, len(balances)):
-            balance = balances[i]
+        data = self.safe_value(response, 'data', {})
+        assets = self.safe_value(data, 'assets', [])
+        for i in range(0, len(assets)):
+            balance = assets[i]
             currencyId = self.safe_string(balance, 'asset')
             code = self.safe_currency_code(currencyId)
             account = {
@@ -340,8 +356,11 @@ class bitbank(Exchange):
             'status': status,
             'symbol': symbol,
             'type': type,
+            'timeInForce': None,
+            'postOnly': None,
             'side': side,
             'price': price,
+            'stopPrice': None,
             'cost': cost,
             'average': average,
             'amount': amount,
@@ -356,7 +375,7 @@ class bitbank(Exchange):
         await self.load_markets()
         market = self.market(symbol)
         if price is None:
-            raise InvalidOrder(self.id + ' createOrder requires a price argument for both market and limit orders')
+            raise InvalidOrder(self.id + ' createOrder() requires a price argument for both market and limit orders')
         request = {
             'pair': market['id'],
             'amount': self.amount_to_precision(symbol, amount),
@@ -365,10 +384,8 @@ class bitbank(Exchange):
             'type': type,
         }
         response = await self.privatePostUserSpotOrder(self.extend(request, params))
-        order = self.parse_order(response['data'], market)
-        id = order['id']
-        self.orders[id] = order
-        return order
+        data = self.safe_value(response, 'data')
+        return self.parse_order(data, market)
 
     async def cancel_order(self, id, symbol=None, params={}):
         await self.load_markets()
@@ -378,7 +395,8 @@ class bitbank(Exchange):
             'pair': market['id'],
         }
         response = await self.privatePostUserSpotCancelOrder(self.extend(request, params))
-        return response['data']
+        data = self.safe_value(response, 'data')
+        return data
 
     async def fetch_order(self, id, symbol=None, params={}):
         await self.load_markets()
@@ -388,7 +406,8 @@ class bitbank(Exchange):
             'pair': market['id'],
         }
         response = await self.privateGetUserSpotOrder(self.extend(request, params))
-        return self.parse_order(response['data'])
+        data = self.safe_value(response, 'data')
+        return self.parse_order(data, market)
 
     async def fetch_open_orders(self, symbol=None, since=None, limit=None, params={}):
         await self.load_markets()
@@ -401,7 +420,9 @@ class bitbank(Exchange):
         if since is not None:
             request['since'] = int(since / 1000)
         response = await self.privateGetUserSpotActiveOrders(self.extend(request, params))
-        return self.parse_orders(response['data']['orders'], market, since, limit)
+        data = self.safe_value(response, 'data', {})
+        orders = self.safe_value(data, 'orders', [])
+        return self.parse_orders(orders, market, since, limit)
 
     async def fetch_my_trades(self, symbol=None, since=None, limit=None, params={}):
         await self.load_markets()
@@ -416,7 +437,9 @@ class bitbank(Exchange):
         if since is not None:
             request['since'] = int(since / 1000)
         response = await self.privateGetUserSpotTradeHistory(self.extend(request, params))
-        return self.parse_trades(response['data']['trades'], market, since, limit)
+        data = self.safe_value(response, 'data', {})
+        trades = self.safe_value(data, 'trades', [])
+        return self.parse_trades(trades, market, since, limit)
 
     async def fetch_deposit_address(self, code, params={}):
         await self.load_markets()
@@ -425,9 +448,11 @@ class bitbank(Exchange):
             'asset': currency['id'],
         }
         response = await self.privateGetUserWithdrawalAccount(self.extend(request, params))
+        data = self.safe_value(response, 'data', {})
         # Not sure about self if there could be more than one account...
-        accounts = response['data']['accounts']
-        address = self.safe_string(accounts[0], 'address')
+        accounts = self.safe_value(data, 'accounts', [])
+        firstAccount = self.safe_value(accounts, 0, {})
+        address = self.safe_string(firstAccount, 'address')
         return {
             'currency': currency,
             'address': address,
@@ -445,7 +470,8 @@ class bitbank(Exchange):
             'amount': amount,
         }
         response = await self.privatePostUserRequestWithdrawal(self.extend(request, params))
-        txid = self.safe_string(response['data'], 'txid')
+        data = self.safe_value(response, 'data', {})
+        txid = self.safe_string(data, 'txid')
         return {
             'info': response,
             'id': txid,

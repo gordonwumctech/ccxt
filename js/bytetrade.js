@@ -19,20 +19,27 @@ module.exports = class bytetrade extends Exchange {
             'certified': true,
             // new metainfo interface
             'has': {
+                'cancelOrder': true,
+                'CORS': false,
+                'createOrder': true,
+                'fetchBalance': true,
+                'fetchBidsAsks': true,
+                'fetchClosedOrders': true,
                 'fetchCurrencies': true,
                 'fetchDepositAddress': true,
-                'CORS': false,
-                'fetchBidsAsks': true,
-                'fetchTickers': true,
-                'fetchOHLCV': true,
-                'fetchMyTrades': true,
-                'fetchOrder': true,
-                'fetchOrders': true,
-                'fetchOpenOrders': true,
-                'fetchClosedOrders': true,
-                'withdraw': true,
                 'fetchDeposits': true,
+                'fetchMarkets': true,
+                'fetchMyTrades': true,
+                'fetchOHLCV': true,
+                'fetchOpenOrders': true,
+                'fetchOrder': true,
+                'fetchOrderBook': true,
+                'fetchOrders': true,
+                'fetchTicker': true,
+                'fetchTickers': true,
+                'fetchTrades': true,
                 'fetchWithdrawals': true,
+                'withdraw': true,
             },
             'timeframes': {
                 '1m': '1m',
@@ -53,11 +60,11 @@ module.exports = class bytetrade extends Exchange {
                 },
                 'logo': 'https://user-images.githubusercontent.com/1294454/67288762-2f04a600-f4e6-11e9-9fd6-c60641919491.jpg',
                 'api': {
-                    'market': 'https://api-v2.bytetrade.com',
-                    'public': 'https://api-v2.bytetrade.com',
+                    'market': 'https://api-v2.byte-trade.com',
+                    'public': 'https://api-v2.byte-trade.com',
                 },
                 'www': 'https://www.byte-trade.com',
-                'doc': 'https://github.com/Bytetrade/bytetrade-official-api-docs/wiki',
+                'doc': 'https://docs.byte-trade.com/#description',
             },
             'api': {
                 'market': {
@@ -98,8 +105,10 @@ module.exports = class bytetrade extends Exchange {
                 },
             },
             'commonCurrencies': {
+                '1': 'ByteTrade',
                 '44': 'ByteHub',
                 '48': 'Blocktonic',
+                '133': 'TerraCredit',
             },
             'exceptions': {
                 'vertify error': AuthenticationError, // typo on the exchange side, 'vertify'
@@ -191,10 +200,7 @@ module.exports = class bytetrade extends Exchange {
                 'code': code,
                 'name': name,
                 'active': active,
-                'precision': {
-                    'amount': amountPrecision,
-                    'price': undefined,
-                },
+                'precision': amountPrecision,
                 'fee': undefined,
                 'limits': {
                     'amount': { 'min': undefined, 'max': undefined },
@@ -223,11 +229,14 @@ module.exports = class bytetrade extends Exchange {
             const id = this.safeString (market, 'symbol');
             let base = this.safeString (market, 'baseName');
             let quote = this.safeString (market, 'quoteName');
-            const normalBase = base.split ('@')[0];
-            const normalQuote = quote.split ('@')[0];
-            const normalSymbol = normalBase + '/' + normalQuote;
             const baseId = this.safeString (market, 'base');
             const quoteId = this.safeString (market, 'quote');
+            const normalBase = base.split ('@' + baseId)[0];
+            let normalQuote = quote.split ('@' + quoteId)[0];
+            if (quoteId === '126') {
+                normalQuote = 'ZAR'; // The id 126 coin is a special coin whose name on the chain is actually ZAR, but it is changed to ZCN after creation, so it must be changed to ZAR when placing the transaction in the chain
+            }
+            const normalSymbol = normalBase + '/' + normalQuote;
             if (baseId in this.commonCurrencies) {
                 base = this.commonCurrencies[baseId];
             }
@@ -276,7 +285,7 @@ module.exports = class bytetrade extends Exchange {
 
     async fetchBalance (params = {}) {
         if (!('userid' in params) && (this.apiKey === undefined)) {
-            throw new ArgumentsRequired (this.id + ' fetchDeposits requires this.apiKey or userid argument');
+            throw new ArgumentsRequired (this.id + ' fetchDeposits() requires this.apiKey or userid argument');
         }
         await this.loadMarkets ();
         const request = {
@@ -486,7 +495,7 @@ module.exports = class bytetrade extends Exchange {
         const type = this.safeString (trade, 'type');
         const takerOrMaker = this.safeString (trade, 'takerOrMaker');
         const side = this.safeString (trade, 'side');
-        const datetime = this.safeString (trade, 'datetime');
+        const datetime = this.iso8601 (timestamp); // this.safeString (trade, 'datetime');
         const order = this.safeString (trade, 'order');
         const fee = this.safeValue (trade, 'fee');
         let symbol = undefined;
@@ -570,8 +579,11 @@ module.exports = class bytetrade extends Exchange {
             'lastTradeTimestamp': lastTradeTimestamp,
             'symbol': symbol,
             'type': type,
+            'timeInForce': undefined,
+            'postOnly': undefined,
             'side': side,
             'price': price,
+            'stopPrice': undefined,
             'amount': amount,
             'cost': cost,
             'average': average,
@@ -586,7 +598,7 @@ module.exports = class bytetrade extends Exchange {
     async createOrder (symbol, type, side, amount, price = undefined, params = {}) {
         this.checkRequiredDependencies ();
         if (this.apiKey === undefined) {
-            throw new ArgumentsRequired ('createOrder requires this.apiKey or userid in params');
+            throw new ArgumentsRequired ('createOrder() requires this.apiKey or userid in params');
         }
         await this.loadMarkets ();
         const market = this.market (symbol);
@@ -607,11 +619,11 @@ module.exports = class bytetrade extends Exchange {
         const baseId = market['baseId'];
         const baseCurrency = this.currency (market['base']);
         const amountTruncated = this.amountToPrecision (symbol, amount);
-        const amountChain = this.toWei (amountTruncated, baseCurrency['precision']['amount']);
+        const amountChain = this.toWei (amountTruncated, baseCurrency['precision']);
         const quoteId = market['quoteId'];
         const quoteCurrency = this.currency (market['quote']);
         const priceRounded = this.priceToPrecision (symbol, price);
-        const priceChain = this.toWei (priceRounded, quoteCurrency['precision']['amount']);
+        const priceChain = this.toWei (priceRounded, quoteCurrency['precision']);
         const now = this.milliseconds ();
         const expiration = this.milliseconds ();
         let datetime = this.iso8601 (now);
@@ -621,6 +633,8 @@ module.exports = class bytetrade extends Exchange {
         const defaultDappId = 'Sagittarius';
         const dappId = this.safeString (params, 'dappId', defaultDappId);
         const defaultFee = this.safeString (this.options, 'fee', '300000000000000');
+        const totalFeeRate = this.safeString (params, 'totalFeeRate', 8);
+        const chainFeeRate = this.safeString (params, 'chainFeeRate', 1);
         const fee = this.safeString (params, 'fee', defaultFee);
         const eightBytes = this.integerPow ('2', '64');
         const allByteStringArray = [
@@ -645,7 +659,10 @@ module.exports = class bytetrade extends Exchange {
             this.numberToLE (0, 2),
             this.numberToLE (Math.floor (now / 1000), 4),
             this.numberToLE (Math.floor (expiration / 1000), 4),
-            this.numberToLE (0, 2),
+            this.numberToLE (1, 1),
+            this.numberToLE (parseInt (chainFeeRate), 2),
+            this.numberToLE (1, 1),
+            this.numberToLE (parseInt (totalFeeRate), 2),
             this.numberToLE (parseInt (quoteId), 4),
             this.numberToLE (parseInt (baseId), 4),
             this.numberToLE (0, 1),
@@ -675,7 +692,10 @@ module.exports = class bytetrade extends Exchange {
             this.numberToLE (0, 2),
             this.numberToLE (Math.floor (now / 1000), 4),
             this.numberToLE (Math.floor (expiration / 1000), 4),
-            this.numberToLE (0, 2),
+            this.numberToLE (1, 1),
+            this.numberToLE (parseInt (chainFeeRate), 2),
+            this.numberToLE (1, 1),
+            this.numberToLE (parseInt (totalFeeRate), 2),
             this.numberToLE (parseInt (quoteId), 4),
             this.numberToLE (parseInt (baseId), 4),
             this.numberToLE (0, 1),
@@ -698,7 +718,7 @@ module.exports = class bytetrade extends Exchange {
         const bytestring = this.binaryConcatArray (allByteStringArray);
         const hash = this.hash (bytestring, 'sha256', 'hex');
         const signature = this.ecdsa (hash, this.secret, 'secp256k1', undefined, true);
-        const recoveryParam = this.decode (this.binaryToBase16 (this.numberToLE (this.sum (signature['v'], 31), 1)));
+        const recoveryParam = this.binaryToBase16 (this.numberToLE (this.sum (signature['v'], 31), 1));
         const mySignature = recoveryParam + signature['r'] + signature['s'];
         const operation = {
             'now': datetime,
@@ -713,6 +733,8 @@ module.exports = class bytetrade extends Exchange {
             'use_btt_as_fee': false,
             'money_id': parseInt (quoteId),
             'stock_id': parseInt (baseId),
+            'custom_no_btt_fee_rate': parseInt (totalFeeRate),
+            'custom_btt_fee_rate': parseInt (chainFeeRate),
         };
         const fatty = {
             'timestamp': datetime,
@@ -760,7 +782,7 @@ module.exports = class bytetrade extends Exchange {
 
     async fetchOrder (id, symbol = undefined, params = {}) {
         if (!('userid' in params) && (this.apiKey === undefined)) {
-            throw new ArgumentsRequired ('fetchOrder requires this.apiKey or userid argument');
+            throw new ArgumentsRequired ('fetchOrder() requires this.apiKey or userid argument');
         }
         await this.loadMarkets ();
         const request = {
@@ -778,7 +800,7 @@ module.exports = class bytetrade extends Exchange {
 
     async fetchOpenOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         if (!('userid' in params) && (this.apiKey === undefined)) {
-            throw new ArgumentsRequired ('fetchOpenOrders requires this.apiKey or userid argument');
+            throw new ArgumentsRequired ('fetchOpenOrders() requires this.apiKey or userid argument');
         }
         await this.loadMarkets ();
         const request = {
@@ -798,7 +820,7 @@ module.exports = class bytetrade extends Exchange {
 
     async fetchClosedOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         if (!('userid' in params) && (this.apiKey === undefined)) {
-            throw new ArgumentsRequired ('fetchClosedOrders requires this.apiKey or userid argument');
+            throw new ArgumentsRequired ('fetchClosedOrders() requires this.apiKey or userid argument');
         }
         await this.loadMarkets ();
         let market = undefined;
@@ -818,7 +840,7 @@ module.exports = class bytetrade extends Exchange {
 
     async fetchOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         if (!('userid' in params) && (this.apiKey === undefined)) {
-            throw new ArgumentsRequired ('fetchOrders requires this.apiKey or userid argument');
+            throw new ArgumentsRequired ('fetchOrders() requires this.apiKey or userid argument');
         }
         await this.loadMarkets ();
         let market = undefined;
@@ -838,10 +860,10 @@ module.exports = class bytetrade extends Exchange {
 
     async cancelOrder (id, symbol = undefined, params = {}) {
         if (this.apiKey === undefined) {
-            throw new ArgumentsRequired ('cancelOrder requires hasAlreadyAuthenticatedSuccessfully');
+            throw new ArgumentsRequired ('cancelOrder() requires hasAlreadyAuthenticatedSuccessfully');
         }
         if (symbol === undefined) {
-            throw new ArgumentsRequired (this.id + ' cancelOrder requires a symbol argument');
+            throw new ArgumentsRequired (this.id + ' cancelOrder() requires a symbol argument');
         }
         await this.loadMarkets ();
         const market = this.market (symbol);
@@ -882,7 +904,7 @@ module.exports = class bytetrade extends Exchange {
         const bytestring = this.binaryConcatArray (byteStringArray);
         const hash = this.hash (bytestring, 'sha256', 'hex');
         const signature = this.ecdsa (hash, this.secret, 'secp256k1', undefined, true);
-        const recoveryParam = this.decode (this.binaryToBase16 (this.numberToLE (this.sum (signature['v'], 31), 1)));
+        const recoveryParam = this.binaryToBase16 (this.numberToLE (this.sum (signature['v'], 31), 1));
         const mySignature = recoveryParam + signature['r'] + signature['s'];
         const operation = {
             'fee': feeAmount,
@@ -939,12 +961,12 @@ module.exports = class bytetrade extends Exchange {
     async transfer (code, amount, address, message = '', params = {}) {
         this.checkRequiredDependencies ();
         if (this.apiKey === undefined) {
-            throw new ArgumentsRequired ('transfer requires this.apiKey');
+            throw new ArgumentsRequired ('transfer() requires this.apiKey');
         }
         await this.loadMarkets ();
         const currency = this.currency (code);
         const amountTruncate = this.decimalToPrecision (amount, TRUNCATE, currency['info']['basePrecision'] - currency['info']['transferPrecision'], DECIMAL_PLACES, NO_PADDING);
-        const amountChain = this.toWei (amountTruncate, currency['precision']['amount']);
+        const amountChain = this.toWei (amountTruncate, currency['precision']);
         const assetType = parseInt (currency['id']);
         const now = this.milliseconds ();
         const expiration = now;
@@ -984,7 +1006,7 @@ module.exports = class bytetrade extends Exchange {
         const bytestring = this.binaryConcatArray (byteStringArray);
         const hash = this.hash (bytestring, 'sha256', 'hex');
         const signature = this.ecdsa (hash, this.secret, 'secp256k1', undefined, true);
-        const recoveryParam = this.decode (this.binaryToBase16 (this.numberToLE (this.sum (signature['v'], 31), 1)));
+        const recoveryParam = this.binaryToBase16 (this.numberToLE (this.sum (signature['v'], 31), 1));
         const mySignature = recoveryParam + signature['r'] + signature['s'];
         const operation = {
             'fee': '300000000000000',
@@ -1045,7 +1067,7 @@ module.exports = class bytetrade extends Exchange {
 
     async fetchMyTrades (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         if (!('userid' in params) && (this.apiKey === undefined)) {
-            throw new ArgumentsRequired ('fetchMyTrades requires this.apiKey or userid argument');
+            throw new ArgumentsRequired ('fetchMyTrades() requires this.apiKey or userid argument');
         }
         await this.loadMarkets ();
         const market = this.market (symbol);
@@ -1065,7 +1087,7 @@ module.exports = class bytetrade extends Exchange {
     async fetchDeposits (code = undefined, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
         if (!('userid' in params) && (this.apiKey === undefined)) {
-            throw new ArgumentsRequired ('fetchDeposits requires this.apiKey or userid argument');
+            throw new ArgumentsRequired ('fetchDeposits() requires this.apiKey or userid argument');
         }
         let currency = undefined;
         const request = {
@@ -1088,7 +1110,7 @@ module.exports = class bytetrade extends Exchange {
     async fetchWithdrawals (code = undefined, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
         if (!('userid' in params) && (this.apiKey === undefined)) {
-            throw new ArgumentsRequired ('fetchWithdrawals requires this.apiKey or userid argument');
+            throw new ArgumentsRequired ('fetchWithdrawals() requires this.apiKey or userid argument');
         }
         let currency = undefined;
         const request = {
@@ -1172,7 +1194,7 @@ module.exports = class bytetrade extends Exchange {
     async fetchDepositAddress (code, params = {}) {
         await this.loadMarkets ();
         if (!('userid' in params) && (this.apiKey === undefined)) {
-            throw new ArgumentsRequired ('fetchDepositAddress requires this.apiKey or userid argument');
+            throw new ArgumentsRequired ('fetchDepositAddress() requires this.apiKey or userid argument');
         }
         const currency = this.currency (code);
         const request = {
@@ -1198,7 +1220,7 @@ module.exports = class bytetrade extends Exchange {
         this.checkAddress (address);
         await this.loadMarkets ();
         if (this.apiKey === undefined) {
-            throw new ArgumentsRequired ('withdraw requires this.apiKey');
+            throw new ArgumentsRequired (this.id + ' withdraw() requires this.apiKey');
         }
         const addressResponse = await this.fetchDepositAddress (code);
         const chainTypeString = this.safeString (addressResponse, 'chainType');
@@ -1290,7 +1312,7 @@ module.exports = class bytetrade extends Exchange {
         const bytestring = this.binaryConcatArray (byteStringArray);
         const hash = this.hash (bytestring, 'sha256', 'hex');
         const signature = this.ecdsa (hash, this.secret, 'secp256k1', undefined, true);
-        const recoveryParam = this.decode (this.binaryToBase16 (this.numberToLE (this.sum (signature['v'], 31), 1)));
+        const recoveryParam = this.binaryToBase16 (this.numberToLE (this.sum (signature['v'], 31), 1));
         const mySignature = recoveryParam + signature['r'] + signature['s'];
         let fatty = undefined;
         let request = undefined;
