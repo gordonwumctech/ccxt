@@ -475,7 +475,7 @@ class huobidm(Exchange):
         raise ExchangeError(self.id + ' fetchOrderBook() returned unrecognized response: ' + self.json(response))
 
     def fetch_ohlcv(self, symbol, timeframe='1m', since=None,
-                    limit=1000, params=None):
+                    limit=2000, params=None):
         self.load_markets()
         market = self.market(symbol)
         method = market['type'] + 'GetMarketHistoryKline'
@@ -483,10 +483,18 @@ class huobidm(Exchange):
             request = {'symbol': market['id']}
         else:
             request = {'contract_code': market['id']}
-        request.update({
-            'period': self.timeframes[timeframe],
-            'size': limit or 1000
-        })
+        if since:
+            duration = self.parse_timeframe(timeframe)
+            request.update({
+                'period': self.timeframes[timeframe],
+                'from': int(since / 1000),
+                'to': int(self.sum(since/1000, (limit or 2000) * duration - 1))
+            })
+        else:
+            request.update({
+                'period': self.timeframes[timeframe],
+                'size': limit or 2000
+            })
         response = getattr(self, method)(self.extend(request, params or {}))
         # {
         #   "ch": "market.BTC_CQ.kline.1min",
