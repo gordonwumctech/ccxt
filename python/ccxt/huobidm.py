@@ -139,6 +139,7 @@ class huobidm(Exchange):
                         'api_state',                    # 查询系统状态
                         'funding_rate',                 # 获取合约的资金费率
                         'historical_funding_rate',      # 获取合约的历史资金费率
+                        'liquidation_orders',           # 获取强平单
                         'api_trading_status',           # 获取用户的API指标禁用信息(private)
                     ],
 
@@ -189,6 +190,7 @@ class huobidm(Exchange):
                         'api_state',  # 查询系统状态
                         'funding_rate',  # 获取合约的资金费率
                         'historical_funding_rate',  # 获取合约的历史资金费率
+                        'liquidation_orders',  # 获取强平单
                         'api_trading_status',  # 获取用户的API指标禁用信息(private)
                     ],
 
